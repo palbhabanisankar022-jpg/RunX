@@ -1,0 +1,6 @@
+{
+  "name": "Remix: Temple Escape 3D",
+  "description": "A high-speed 3D endless runner game built with Three.js. Avoid obstacles, collect coins, and survive the jungle temple.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
