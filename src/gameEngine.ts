@@ -1100,11 +1100,13 @@ export class GameEngine {
           if (Math.random() < GAME_CONFIG.OBSTACLE_SPAWN_CHANCE) {
               const laneIndex = Math.floor(Math.random() * 3);
               const rand = Math.random();
-              let type: 'NORMAL' | 'UP' | 'SWING' | 'FLOOR' = 'NORMAL';
+              let type: 'NORMAL' | 'UP' | 'SWING' | 'FLOOR' | 'LOG' | 'PLATFORM' = 'NORMAL';
               
-              if (rand < 0.25) type = 'UP';
-              else if (rand < 0.45) type = 'SWING';
-              else if (rand < 0.60) type = 'FLOOR';
+              if (rand < 0.15) type = 'UP';
+              else if (rand < 0.30) type = 'SWING';
+              else if (rand < 0.45) type = 'FLOOR';
+              else if (rand < 0.60) type = 'LOG';
+              else if (rand < 0.75) type = 'PLATFORM';
 
               const group = new THREE.Group();
 
@@ -1160,6 +1162,44 @@ export class GameEngine {
                   group.add(base);
                   group.position.y = 0.1;
                   group.userData.phase = Math.random() * Math.PI * 2;
+              } else if (type === 'LOG') {
+                  // Falling Log
+                  const logGeom = new THREE.CylinderGeometry(0.6, 0.6, 4, 12);
+                  const logMat = new THREE.MeshPhongMaterial({ color: 0x4b3621 });
+                  const log = new THREE.Mesh(logGeom, logMat);
+                  log.rotation.z = Math.PI / 2;
+                  
+                  // Bark detail
+                  const ringGeom = new THREE.TorusGeometry(0.6, 0.05, 8, 16);
+                  const ringMat = new THREE.MeshPhongMaterial({ color: 0x2b1d0e });
+                  for (let i = 0; i < 3; i++) {
+                      const ring = new THREE.Mesh(ringGeom, ringMat);
+                      ring.position.y = (i - 1) * 1.2;
+                      ring.rotation.x = Math.PI / 2;
+                      log.add(ring);
+                  }
+
+                  group.add(log);
+                  group.position.y = 15; // Start in air
+                  group.userData.vy = 0;
+                  group.userData.triggered = false;
+              } else if (type === 'PLATFORM') {
+                  // Moving side-to-side platform
+                  const platGeom = new THREE.BoxGeometry(4, 0.8, 3.5);
+                  const platMat = new THREE.MeshPhongMaterial({ color: 0x8b4513 });
+                  const platform = new THREE.Mesh(platGeom, platMat);
+                  
+                  // Stone edges
+                  const edgeGeom = new THREE.BoxGeometry(4.2, 0.4, 3.7);
+                  const edgeMat = new THREE.MeshPhongMaterial({ color: 0x666666 });
+                  const edge = new THREE.Mesh(edgeGeom, edgeMat);
+                  edge.position.y = -0.2;
+                  platform.add(edge);
+
+                  group.add(platform);
+                  group.position.y = 0.4;
+                  group.userData.phase = Math.random() * Math.PI * 2;
+                  group.userData.baseX = (laneIndex - 1) * 3;
               } else {
                   // Crate or Rock
                   const isCrate = Math.random() > 0.5;
@@ -1426,6 +1466,26 @@ export class GameEngine {
             obs.userData.phase += delta * 3;
             // Floor spikes pop up and down
             obs.children[0].position.y = -0.5 + Math.max(0, Math.sin(obs.userData.phase)) * 0.8;
+        } else if (obs.userData.type === 'LOG') {
+            const worldPos = new THREE.Vector3();
+            obs.getWorldPosition(worldPos);
+            if (!obs.userData.triggered && worldPos.z < 45 && worldPos.z > -10) {
+                obs.userData.triggered = true;
+            }
+            if (obs.userData.triggered) {
+                obs.userData.vy -= delta * 60; // Gravity
+                obs.position.y += obs.userData.vy * delta;
+                if (obs.position.y < 0.6) {
+                    obs.position.y = 0.6;
+                    obs.userData.vy = 0;
+                    if (Math.abs(obs.userData.vy) > 1) {
+                         this.sounds.play('CRASH'); // Sound when log hits ground
+                    }
+                }
+            }
+        } else if (obs.userData.type === 'PLATFORM') {
+            obs.userData.phase += delta * 1.5;
+            obs.position.x = obs.userData.baseX + Math.sin(obs.userData.phase) * 3;
         }
     });
 
@@ -1806,19 +1866,33 @@ export class GameEngine {
 
           // Approximate bounds for groups
           const isUp = obs.userData.type === 'UP';
-          const obsHWidth = isUp ? 1.5 : 1.1;
-          const obsHHeight = isUp ? 0.2 : 1.1;
+          const isLog = obs.userData.type === 'LOG';
+          const isPlatform = obs.userData.type === 'PLATFORM';
+          
+          let obsHWidth = 1.1;
+          let obsHHeight = 1.1;
+          
+          if (isUp) {
+              obsHWidth = 1.5;
+              obsHHeight = 0.2;
+          } else if (isLog) {
+              obsHWidth = 2.0;
+              obsHHeight = 0.6;
+          } else if (isPlatform) {
+              obsHWidth = 2.0;
+              obsHHeight = 0.4;
+          }
 
-          if (dx < hWidth + obsHWidth && dz < hDepth + 1.0 && dy < hHeight + obsHHeight) {
+          if (dx < hWidth + obsHWidth && dz < hDepth + 1.2 && dy < hHeight + obsHHeight) {
               if (this.invincibilityTimer <= 0) {
                   // SHIELD CHECK
                   if (this.shieldTimer > 0) {
                       this.shieldTimer = 0; // Consume shield
-                      this.invincibilityTimer = 1.0; // Short invincibility for safety
+                      this.invincibilityTimer = 1.3; // Short invincibility for safety
                       this.sounds.play('CRASH');
                       for(let j=0; j<20; j++) this.spawnParticle(playerPos, 0x00ffff, 4);
-                  } else if (isUp || obs.userData.type === 'NORMAL') {
-                      // Red Rod and Rock/Crate are ALWAYS fatal
+                  } else if (isUp || obs.userData.type === 'NORMAL' || isLog) {
+                      // Fatal obstacles
                       this.gameOver();
                   } else if (this.lives > 0) {
                       // STUMBLE MECHANIC for other obstacles
